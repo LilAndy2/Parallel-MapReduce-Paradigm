@@ -85,6 +85,16 @@ int main(int argc, char **argv) {
         .file_count = file_count,
     };
 
+    int letters_per_thread = 26 / number_of_reducer_threads;
+    int extra_letters = 26 % number_of_reducer_threads;
+
+    ReducerArgs reducer_args = {
+        .unique_words = &unique_words,
+        .word_list_mutex = &word_list_mutex,
+        .letters_per_thread = letters_per_thread,
+        .extra_letters = extra_letters,
+    };
+
     int r;
     void *status;
 
@@ -96,6 +106,7 @@ int main(int argc, char **argv) {
         thread_args->number_of_mapper_threads = number_of_mapper_threads;
         thread_args->total_number_of_threads = total_number_of_threads;
         thread_args->mapper_args = &mapper_args;
+        thread_args->reducer_args = &reducer_args;
         thread_args->barrier = &barrier;
 
         r = pthread_create(&threads[id], NULL, thread_function, thread_args);
@@ -119,16 +130,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    WordInfo *current = unique_words;
-    while (current) {
-        printf("Word: %s, File IDs: ", current->word);
-        for (int i = 0; i < current->file_count; i++) {
-            printf("%d ", current->file_ids[i]);
-        }
-        printf("\n");
-        current = current->next;
-    }
-
     // Free used memory
     free(threads); // Free memory allocated for threads
     for (int i = 0; i < file_count; i++) {
@@ -136,7 +137,7 @@ int main(int argc, char **argv) {
     }
     free(checked_files); // Free memory allocated for the checked files array
 
-    current = unique_words;
+    WordInfo *current = unique_words;
     while (current) {
         WordInfo *temp = current;
         free(current->word);

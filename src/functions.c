@@ -10,7 +10,7 @@ void *thread_function(void *arg) {
     pthread_barrier_wait(thread_args->barrier);
 
     if (thread_args->thread_id >= thread_args->number_of_mapper_threads) {
-        reducer_function();
+        reducer_function(thread_args->reducer_args, thread_args->thread_id, thread_args->number_of_mapper_threads, thread_args->total_number_of_threads);
     }
 
     free(thread_args);
@@ -48,8 +48,118 @@ void *mapper_function(MapperArgs *mapper_args) {
     }
 }
 
-void *reducer_function() {
-    printf("Reducer thread\n");
+void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_mapper_threads, int total_number_of_threads) {
+    // printf("Reducer thread\n");
+
+    // pthread_mutex_lock(reducer_args->word_list_mutex);
+    // WordInfo *current1 = *(reducer_args->unique_words);
+    // while (current1) {
+    //     printf("Word: %s, File IDs: ", current1->word);
+    //     for (int i = 0; i < current1->file_count; i++) {
+    //         printf("%d ", current1->file_ids[i]);
+    //     }
+    //     printf("\n");
+    //     current1 = current1->next;
+    // }
+
+    // pthread_mutex_unlock(reducer_args->word_list_mutex);
+
+    int reducer_id = thread_id - number_of_mapper_threads;
+    int start_letter = reducer_id * reducer_args->letters_per_thread;
+    int end_letter = start_letter + reducer_args->letters_per_thread - 1;
+
+    // Add extra letters to the last thread if applicable
+    if (reducer_id == total_number_of_threads - number_of_mapper_threads - 1) {
+        end_letter += reducer_args->extra_letters;
+    }
+
+    //printf("Reducer %d: %d to %d\n", reducer_id, start_letter, end_letter);
+
+    WordInfo *local_buckets[26] = {NULL};
+
+    pthread_mutex_lock(reducer_args->word_list_mutex); // Lock while accessing the shared list
+    WordInfo *current = *(reducer_args->unique_words);
+
+    // Group words into local buckets by their starting letter
+    while (current) {
+        char first_letter = tolower(current->word[0]);
+        if (first_letter >= 'a' && first_letter <= 'z') {
+            int letter_index = first_letter - 'a';
+            if (letter_index >= start_letter && letter_index <= end_letter) {
+                // Add the word to the corresponding bucket
+                WordInfo *new_entry = malloc(sizeof(WordInfo));
+                new_entry->word = strdup(current->word);
+                new_entry->file_count = current->file_count;
+                new_entry->file_ids = malloc(current->file_count * sizeof(int));
+                memcpy(new_entry->file_ids, current->file_ids, current->file_count * sizeof(int));
+                new_entry->next = local_buckets[letter_index];
+                local_buckets[letter_index] = new_entry;
+            }
+        }
+        current = current->next;
+    }
+    pthread_mutex_unlock(reducer_args->word_list_mutex);
+
+    // Process each letter bucket assigned to this thread
+    for (int i = start_letter; i <= end_letter; i++) {
+        if (!local_buckets[i]) continue; // Skip empty buckets
+
+        // Count entries in the bucket
+        int bucket_size = 0;
+        WordInfo *tmp = local_buckets[i];
+        while (tmp) {
+            bucket_size++;
+            tmp = tmp->next;
+        }
+
+        // Create an array for sorting
+        WordInfo **bucket_array = malloc(bucket_size * sizeof(WordInfo *));
+        tmp = local_buckets[i];
+        for (int j = 0; j < bucket_size; j++) {
+            bucket_array[j] = tmp;
+            tmp = tmp->next;
+        }
+
+        // Sort the bucket
+        qsort(bucket_array, bucket_size, sizeof(WordInfo *), compare_words);
+
+        // Write sorted words to the output file
+        char output_file_name[10];
+        snprintf(output_file_name, sizeof(output_file_name), "%c.txt", 'a' + i);
+        FILE *output_file = fopen(output_file_name, "w");
+        if (!output_file) {
+            perror("Failed to open output file");
+            free(bucket_array);
+            continue;
+        }
+
+        for (int j = 0; j < bucket_size; j++) {
+            WordInfo *word_info = bucket_array[j];
+            fprintf(output_file, "%s:[", word_info->word);
+            for (int k = 0; k < word_info->file_count; k++) {
+                if (k == word_info->file_count - 1) {
+                    fprintf(output_file, "%d", word_info->file_ids[k]);
+                } else {
+                    fprintf(output_file, "%d ", word_info->file_ids[k]);
+                }
+            }
+            fprintf(output_file, "]\n");
+        }
+
+        fclose(output_file);
+
+        // Free the bucket array
+        free(bucket_array);
+
+        // Free the local bucket list
+        while (local_buckets[i]) {
+            WordInfo *to_free = local_buckets[i];
+            local_buckets[i] = local_buckets[i]->next;
+            free(to_free->word);
+            free(to_free->file_ids);
+            free(to_free);
+        }
+    }
 }
 
 void parse_word(char *word) {
@@ -107,4 +217,14 @@ void add_word_to_list(WordInfo **word_list, const char *word, int file_id) {
 
         current->next = new_word;
     }
+}
+
+int compare_words(const void *a, const void *b) {
+    WordInfo *word_a = *(WordInfo **)a;
+    WordInfo *word_b = *(WordInfo **)b;
+
+    if (word_a->file_count != word_b->file_count) {
+        return word_b->file_count - word_a->file_count; // Descending by file count
+    }
+    return strcmp(word_a->word, word_b->word); // Ascending alphabetically
 }
