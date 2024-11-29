@@ -49,21 +49,6 @@ void *mapper_function(MapperArgs *mapper_args) {
 }
 
 void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_mapper_threads, int total_number_of_threads) {
-    // printf("Reducer thread\n");
-
-    // pthread_mutex_lock(reducer_args->word_list_mutex);
-    // WordInfo *current1 = *(reducer_args->unique_words);
-    // while (current1) {
-    //     printf("Word: %s, File IDs: ", current1->word);
-    //     for (int i = 0; i < current1->file_count; i++) {
-    //         printf("%d ", current1->file_ids[i]);
-    //     }
-    //     printf("\n");
-    //     current1 = current1->next;
-    // }
-
-    // pthread_mutex_unlock(reducer_args->word_list_mutex);
-
     int reducer_id = thread_id - number_of_mapper_threads;
     int start_letter = reducer_id * reducer_args->letters_per_thread;
     int end_letter = start_letter + reducer_args->letters_per_thread - 1;
@@ -72,8 +57,6 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
     if (reducer_id == total_number_of_threads - number_of_mapper_threads - 1) {
         end_letter += reducer_args->extra_letters;
     }
-
-    //printf("Reducer %d: %d to %d\n", reducer_id, start_letter, end_letter);
 
     WordInfo *local_buckets[26] = {NULL};
 
@@ -103,7 +86,12 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
     // Process each letter bucket assigned to this thread
     for (int i = start_letter; i <= end_letter; i++) {
         // Open the output file for this letter
-        char output_file_name[10];
+        char output_file_name[50];
+        if (number_of_mapper_threads == 1 && total_number_of_threads - number_of_mapper_threads == 1) {
+            //snprintf(output_file_name, sizeof(output_file_name), "../checker/test_sec/%c.txt", 'a' + i);
+        } else {
+            //snprintf(output_file_name, sizeof(output_file_name), "../checker/test_par/%c.txt", 'a' + i);
+        }
         snprintf(output_file_name, sizeof(output_file_name), "%c.txt", 'a' + i);
         FILE *output_file = fopen(output_file_name, "w");
         if (!output_file) {
@@ -134,6 +122,9 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
             // Write sorted words to the output file
             for (int j = 0; j < bucket_size; j++) {
                 WordInfo *word_info = bucket_array[j];
+
+                qsort(word_info->file_ids, word_info->file_count, sizeof(int), compare_file_ids);
+
                 fprintf(output_file, "%s:[", word_info->word);
                 for (int k = 0; k < word_info->file_count; k++) {
                     if (k == word_info->file_count - 1) {
@@ -165,8 +156,8 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
 void parse_word(char *word) {
     char *write_ptr = word; // Pointer to overwrite the input string in place
     for (char *read_ptr = word; *read_ptr; read_ptr++) {
-        if (isalnum(*read_ptr)) {
-            // If it's a letter or digit, convert to lowercase and copy
+        if (isalpha(*read_ptr)) {
+            // If it's a letter, convert to lowercase and copy
             *write_ptr = tolower(*read_ptr);
             write_ptr++;
         }
@@ -227,4 +218,10 @@ int compare_words(const void *a, const void *b) {
         return word_b->file_count - word_a->file_count; // Descending by file count
     }
     return strcmp(word_a->word, word_b->word); // Ascending alphabetically
+}
+
+int compare_file_ids(const void *a, const void *b) {
+    int file_id_a = *(int *)a;
+    int file_id_b = *(int *)b;
+    return file_id_a - file_id_b; // Ascending order
 }

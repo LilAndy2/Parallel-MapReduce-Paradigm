@@ -50,3 +50,4 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
 void parse_word(char *str);
 void add_word_to_list(WordInfo **word_list, const char *word, int file_id);
 int compare_words(const void *a, const void *b);
+int compare_file_ids(const void *a, const void *b);
