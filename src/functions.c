@@ -102,54 +102,54 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
 
     // Process each letter bucket assigned to this thread
     for (int i = start_letter; i <= end_letter; i++) {
-        if (!local_buckets[i]) continue; // Skip empty buckets
-
-        // Count entries in the bucket
-        int bucket_size = 0;
-        WordInfo *tmp = local_buckets[i];
-        while (tmp) {
-            bucket_size++;
-            tmp = tmp->next;
-        }
-
-        // Create an array for sorting
-        WordInfo **bucket_array = malloc(bucket_size * sizeof(WordInfo *));
-        tmp = local_buckets[i];
-        for (int j = 0; j < bucket_size; j++) {
-            bucket_array[j] = tmp;
-            tmp = tmp->next;
-        }
-
-        // Sort the bucket
-        qsort(bucket_array, bucket_size, sizeof(WordInfo *), compare_words);
-
-        // Write sorted words to the output file
+        // Open the output file for this letter
         char output_file_name[10];
         snprintf(output_file_name, sizeof(output_file_name), "%c.txt", 'a' + i);
         FILE *output_file = fopen(output_file_name, "w");
         if (!output_file) {
             perror("Failed to open output file");
-            free(bucket_array);
             continue;
         }
 
-        for (int j = 0; j < bucket_size; j++) {
-            WordInfo *word_info = bucket_array[j];
-            fprintf(output_file, "%s:[", word_info->word);
-            for (int k = 0; k < word_info->file_count; k++) {
-                if (k == word_info->file_count - 1) {
-                    fprintf(output_file, "%d", word_info->file_ids[k]);
-                } else {
-                    fprintf(output_file, "%d ", word_info->file_ids[k]);
-                }
+        if (local_buckets[i]) {
+            // Count entries in the bucket
+            int bucket_size = 0;
+            WordInfo *tmp = local_buckets[i];
+            while (tmp) {
+                bucket_size++;
+                tmp = tmp->next;
             }
-            fprintf(output_file, "]\n");
+
+            // Create an array for sorting
+            WordInfo **bucket_array = malloc(bucket_size * sizeof(WordInfo *));
+            tmp = local_buckets[i];
+            for (int j = 0; j < bucket_size; j++) {
+                bucket_array[j] = tmp;
+                tmp = tmp->next;
+            }
+
+            // Sort the bucket
+            qsort(bucket_array, bucket_size, sizeof(WordInfo *), compare_words);
+
+            // Write sorted words to the output file
+            for (int j = 0; j < bucket_size; j++) {
+                WordInfo *word_info = bucket_array[j];
+                fprintf(output_file, "%s:[", word_info->word);
+                for (int k = 0; k < word_info->file_count; k++) {
+                    if (k == word_info->file_count - 1) {
+                        fprintf(output_file, "%d", word_info->file_ids[k]);
+                    } else {
+                        fprintf(output_file, "%d ", word_info->file_ids[k]);
+                    }
+                }
+                fprintf(output_file, "]\n");
+            }
+
+            // Free the bucket array
+            free(bucket_array);
         }
 
         fclose(output_file);
-
-        // Free the bucket array
-        free(bucket_array);
 
         // Free the local bucket list
         while (local_buckets[i]) {
