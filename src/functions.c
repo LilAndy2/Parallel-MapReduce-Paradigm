@@ -1,8 +1,23 @@
 #include "header.h"
 
-void *mapper_function(void *arg) {
-    MapperArgs *mapper_args = (MapperArgs *) arg;
+void *thread_function(void *arg) {
+    ThreadArgs *thread_args = (ThreadArgs *) arg;
+    if (thread_args->thread_id < thread_args->number_of_mapper_threads) {
+        mapper_function(thread_args->mapper_args);
+    }
 
+    //printf("Thread %d reached the barrier.\n", thread_args->thread_id);
+    pthread_barrier_wait(thread_args->barrier);
+
+    if (thread_args->thread_id >= thread_args->number_of_mapper_threads) {
+        reducer_function();
+    }
+
+    free(thread_args);
+    pthread_exit(NULL);
+}
+
+void *mapper_function(MapperArgs *mapper_args) {
     while(1) {
         int current_file_index;
 
@@ -31,13 +46,10 @@ void *mapper_function(void *arg) {
 
         fclose(file);
     }
-
-    pthread_exit(NULL);
 }
 
-void *reducer_function(void *arg) {
+void *reducer_function() {
     printf("Reducer thread\n");
-    pthread_exit(NULL);
 }
 
 void parse_word(char *word) {

@@ -16,6 +16,8 @@ int main(int argc, char **argv) {
     pthread_mutex_t word_list_mutex, file_index_mutex;
     pthread_mutex_init(&word_list_mutex, NULL);
     pthread_mutex_init(&file_index_mutex, NULL);
+    pthread_barrier_t barrier;
+    pthread_barrier_init(&barrier, NULL, total_number_of_threads);
 
     int next_file_index = 0;
 
@@ -72,12 +74,6 @@ int main(int argc, char **argv) {
         checked_files[i].file_name = path;
     }
 
-    // for (int i = 0; i < file_count; i++) {
-    //     printf("File id: %d\n", checked_files[i].file_id);
-    //     printf("File name: %s\n", checked_files[i].file_name);
-    // }
-    // printf("\n");
-
     WordInfo *unique_words = NULL;
 
     MapperArgs mapper_args = {
@@ -94,14 +90,19 @@ int main(int argc, char **argv) {
 
     // Create threads
     for (int id = 0; id < total_number_of_threads; id++) {
-        if (id < number_of_mapper_threads) {
-            r = pthread_create(&threads[id], NULL, mapper_function, &mapper_args);
-        } else {
-            r = pthread_create(&threads[id], NULL, reducer_function, NULL);
-        }
+        ThreadArgs *thread_args = malloc(sizeof(ThreadArgs));
+
+        thread_args->thread_id = id;
+        thread_args->number_of_mapper_threads = number_of_mapper_threads;
+        thread_args->total_number_of_threads = total_number_of_threads;
+        thread_args->mapper_args = &mapper_args;
+        thread_args->barrier = &barrier;
+
+        r = pthread_create(&threads[id], NULL, thread_function, thread_args);
             
         if (r) {
             printf("Failed to create thread %d\n", id);
+            free(thread_args);
             free(threads);
             exit(-1);
         }
@@ -146,6 +147,7 @@ int main(int argc, char **argv) {
 
     pthread_mutex_destroy(&word_list_mutex);
     pthread_mutex_destroy(&file_index_mutex);
+    pthread_barrier_destroy(&barrier);
 
     return 0;
 }

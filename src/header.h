@@ -28,7 +28,16 @@ typedef struct {
     int file_count;
 } MapperArgs;
 
-void *mapper_function(void *arg);
-void *reducer_function(void *arg);
+typedef struct {
+    int thread_id;
+    int number_of_mapper_threads;
+    int total_number_of_threads;
+    MapperArgs *mapper_args;
+    pthread_barrier_t *barrier;
+} ThreadArgs;
+
+void *thread_function(void *arg);
+void *mapper_function(MapperArgs *mapper_args);
+void *reducer_function();
 void parse_word(char *str);
 void add_word_to_list(WordInfo **word_list, const char *word, int file_id);
