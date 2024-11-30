@@ -13,13 +13,12 @@ int main(int argc, char **argv) {
     char *input_file = argv[3];
     int total_number_of_threads = number_of_mapper_threads + number_of_reducer_threads;
 
-    pthread_mutex_t word_list_mutex, file_index_mutex;
+    pthread_mutex_t word_list_mutex;
     pthread_mutex_init(&word_list_mutex, NULL);
-    pthread_mutex_init(&file_index_mutex, NULL);
     pthread_barrier_t barrier;
     pthread_barrier_init(&barrier, NULL, total_number_of_threads);
 
-    int next_file_index = 0;
+    atomic_int next_file_index = 0;
 
     // Allocate memory for threads
     pthread_t *threads = malloc(total_number_of_threads * sizeof(pthread_t));
@@ -79,7 +78,6 @@ int main(int argc, char **argv) {
     MapperArgs mapper_args = {
         .checked_files = checked_files,
         .next_file_index = &next_file_index,
-        .file_index_mutex = &file_index_mutex,
         .unique_words = &unique_words,
         .word_list_mutex = &word_list_mutex,
         .file_count = file_count,
@@ -147,7 +145,6 @@ int main(int argc, char **argv) {
     }
 
     pthread_mutex_destroy(&word_list_mutex);
-    pthread_mutex_destroy(&file_index_mutex);
     pthread_barrier_destroy(&barrier);
 
     return 0;

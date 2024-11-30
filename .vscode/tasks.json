@@ -9,6 +9,7 @@
 				"-g",
 				"-o",
 				"-pthread",
+				"-std=c11",
 				"${fileDirname}\\${fileBasenameNoExtension}.exe",
 				"${file}"
 			],

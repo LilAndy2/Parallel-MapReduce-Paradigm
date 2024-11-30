@@ -6,7 +6,6 @@ void *thread_function(void *arg) {
         mapper_function(thread_args->mapper_args);
     }
 
-    //printf("Thread %d reached the barrier.\n", thread_args->thread_id);
     pthread_barrier_wait(thread_args->barrier);
 
     if (thread_args->thread_id >= thread_args->number_of_mapper_threads) {
@@ -18,16 +17,14 @@ void *thread_function(void *arg) {
 }
 
 void *mapper_function(MapperArgs *mapper_args) {
-    while(1) {
-        int current_file_index;
+    WordInfo *local_word_list = NULL;
 
-        pthread_mutex_lock(mapper_args->file_index_mutex);
-        if (*(mapper_args->next_file_index) >= mapper_args->file_count) {
-            pthread_mutex_unlock(mapper_args->file_index_mutex);
+    while(1) {
+        int current_file_index = atomic_fetch_add(mapper_args->next_file_index, 1);
+
+        if (current_file_index >= mapper_args->file_count) {
             break;
         }
-        current_file_index = (*(mapper_args->next_file_index))++;
-        pthread_mutex_unlock(mapper_args->file_index_mutex);
 
         char *file_name = mapper_args->checked_files[current_file_index].file_name;
         FILE *file = fopen(file_name, "r");
@@ -39,13 +36,17 @@ void *mapper_function(MapperArgs *mapper_args) {
         char buffer[MAX_WORD_SIZE];
         while (fscanf(file, "%s", buffer) == 1) {
             parse_word(buffer);
-            pthread_mutex_lock(mapper_args->word_list_mutex);
-            add_word_to_list(mapper_args->unique_words, buffer, mapper_args->checked_files[current_file_index].file_id);
-            pthread_mutex_unlock(mapper_args->word_list_mutex);
+            //pthread_mutex_lock(mapper_args->word_list_mutex);
+            add_word_to_list(&local_word_list, buffer, mapper_args->checked_files[current_file_index].file_id);
+            //pthread_mutex_unlock(mapper_args->word_list_mutex);
         }
 
         fclose(file);
     }
+
+    pthread_mutex_lock(mapper_args->word_list_mutex);
+    merge_local_list_into_global(mapper_args->unique_words, local_word_list);
+    pthread_mutex_unlock(mapper_args->word_list_mutex);
 }
 
 void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_mapper_threads, int total_number_of_threads) {
@@ -87,11 +88,6 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
     for (int i = start_letter; i <= end_letter; i++) {
         // Open the output file for this letter
         char output_file_name[50];
-        if (number_of_mapper_threads == 1 && total_number_of_threads - number_of_mapper_threads == 1) {
-            //snprintf(output_file_name, sizeof(output_file_name), "../checker/test_sec/%c.txt", 'a' + i);
-        } else {
-            //snprintf(output_file_name, sizeof(output_file_name), "../checker/test_par/%c.txt", 'a' + i);
-        }
         snprintf(output_file_name, sizeof(output_file_name), "%c.txt", 'a' + i);
         FILE *output_file = fopen(output_file_name, "w");
         if (!output_file) {
@@ -207,6 +203,67 @@ void add_word_to_list(WordInfo **word_list, const char *word, int file_id) {
         }
 
         current->next = new_word;
+    }
+}
+
+void merge_local_list_into_global(WordInfo **global_list, WordInfo *local_list) {
+    WordInfo *current_local = local_list;
+
+    while (current_local) {
+        // Search for the word in the global list
+        WordInfo *current_global = *global_list;
+        WordInfo *prev_global = NULL;
+
+        while (current_global && strcmp(current_global->word, current_local->word) < 0) {
+            prev_global = current_global;
+            current_global = current_global->next;
+        }
+
+        if (current_global && strcmp(current_global->word, current_local->word) == 0) {
+            // Word exists in the global list; merge file IDs
+            for (int i = 0; i < current_local->file_count; i++) {
+                int file_id = current_local->file_ids[i];
+                int found = 0;
+
+                for (int j = 0; j < current_global->file_count; j++) {
+                    if (current_global->file_ids[j] == file_id) {
+                        found = 1;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    // Add the file ID to the global word entry
+                    current_global->file_ids = realloc(current_global->file_ids, (current_global->file_count + 1) * sizeof(int));
+                    current_global->file_ids[current_global->file_count] = file_id;
+                    current_global->file_count++;
+                }
+            }
+        } else {
+            // Word does not exist in the global list; insert it
+            WordInfo *new_global_word = malloc(sizeof(WordInfo));
+            new_global_word->word = strdup(current_local->word);
+            new_global_word->file_count = current_local->file_count;
+            new_global_word->file_ids = malloc(current_local->file_count * sizeof(int));
+            memcpy(new_global_word->file_ids, current_local->file_ids, current_local->file_count * sizeof(int));
+
+            // Insert the new word into the global list
+            new_global_word->next = current_global;
+            if (prev_global) {
+                prev_global->next = new_global_word;
+            } else {
+                *global_list = new_global_word;
+            }
+        }
+
+        // Move to the next word in the local list
+        WordInfo *temp = current_local;
+        current_local = current_local->next;
+
+        // Free the local word entry (no longer needed after merging)
+        free(temp->word);
+        free(temp->file_ids);
+        free(temp);
     }
 }
 
