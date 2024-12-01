@@ -88,7 +88,7 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
 
     WordInfo *local_buckets[26] = {NULL};
 
-    // Use a mutex while accesing the shaerd list of unique words
+    // Use a mutex while accesing the shared list of unique words
     pthread_mutex_lock(reducer_args->word_list_mutex);
     WordInfo *current = *(reducer_args->unique_words);
 
