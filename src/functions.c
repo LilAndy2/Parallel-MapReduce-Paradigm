@@ -1,13 +1,19 @@
 #include "header.h"
 
+/* Thread function is used by all threads.
+    Divides each thread's task depending if it is a Mapper or a Reducer. 
+    */
 void *thread_function(void *arg) {
     ThreadArgs *thread_args = (ThreadArgs *) arg;
+    // If thread is a Mapper, perform the mapper function
     if (thread_args->thread_id < thread_args->number_of_mapper_threads) {
         mapper_function(thread_args->mapper_args);
     }
 
+    // Wait for all Mappers to finish their task before proceeding with the Reducers
     pthread_barrier_wait(thread_args->barrier);
 
+    // If thread is a Reducer, perform the reducer function
     if (thread_args->thread_id >= thread_args->number_of_mapper_threads) {
         reducer_function(thread_args->reducer_args, thread_args->thread_id, thread_args->number_of_mapper_threads, thread_args->total_number_of_threads);
     }
@@ -16,12 +22,25 @@ void *thread_function(void *arg) {
     pthread_exit(NULL);
 }
 
+/* Mapper function performs the following tasks:
+    - opens each file and reads it word by word;
+    - for each unique word there is an entry in the local list with the word and the ID of the file it is occured in;
+    - after processing the file, it is closed;
+    - in the end, all local lists are merged in a global list, which contains all entries. 
+    */
 void *mapper_function(MapperArgs *mapper_args) {
     WordInfo *local_word_list = NULL;
 
+    /* Using the while loop to give a thread a new file to process if it finished the previous one. 
+        By assigning the workload this way, the work is spread equally between the threads, taking
+        into consideration the dimension of each file. 
+        */
     while(1) {
+        // Using an atomic incrementer for the index of the next file to be processed
+        // This way, the threads will not process the same file
         int current_file_index = atomic_fetch_add(mapper_args->next_file_index, 1);
 
+        // If all files have been processed, exit the loop
         if (current_file_index >= mapper_args->file_count) {
             break;
         }
@@ -33,23 +52,31 @@ void *mapper_function(MapperArgs *mapper_args) {
             continue;
         }
 
+        // For each word in the file, parse it and add it to the local list
         char buffer[MAX_WORD_SIZE];
         while (fscanf(file, "%s", buffer) == 1) {
             parse_word(buffer);
-            //pthread_mutex_lock(mapper_args->word_list_mutex);
             add_word_to_list(&local_word_list, buffer, mapper_args->checked_files[current_file_index].file_id);
-            //pthread_mutex_unlock(mapper_args->word_list_mutex);
         }
 
         fclose(file);
     }
 
+    /* Merge the local list into the global list. 
+        Using a mutex to ensure the list is modified by a single thread at once and there is no race condition. 
+        */
     pthread_mutex_lock(mapper_args->word_list_mutex);
     merge_local_list_into_global(mapper_args->unique_words, local_word_list);
     pthread_mutex_unlock(mapper_args->word_list_mutex);
 }
 
+/* Reducer function performs the following tasks:
+    - groups the words in local buckets by their starting letter;
+    - sorts the words in each bucket alphabetically and then after the number of files they appear in;
+    - writes the sorted words to the output file for the corresponding letter. 
+    */
 void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_mapper_threads, int total_number_of_threads) {
+    // Spread the workload (letters) equally between the threads
     int reducer_id = thread_id - number_of_mapper_threads;
     int start_letter = reducer_id * reducer_args->letters_per_thread;
     int end_letter = start_letter + reducer_args->letters_per_thread - 1;
@@ -61,7 +88,8 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
 
     WordInfo *local_buckets[26] = {NULL};
 
-    pthread_mutex_lock(reducer_args->word_list_mutex); // Lock while accessing the shared list
+    // Use a mutex while accesing the shaerd list of unique words
+    pthread_mutex_lock(reducer_args->word_list_mutex);
     WordInfo *current = *(reducer_args->unique_words);
 
     // Group words into local buckets by their starting letter
@@ -149,32 +177,38 @@ void *reducer_function(ReducerArgs *reducer_args, int thread_id, int number_of_m
     }
 }
 
+/* Parse the word so that it is a lowercase alphabetic string.
+    Numbers, punctuation signs and other characters will be ignored.
+    */
 void parse_word(char *word) {
-    char *write_ptr = word; // Pointer to overwrite the input string in place
+    char *write_ptr = word;
     for (char *read_ptr = word; *read_ptr; read_ptr++) {
         if (isalpha(*read_ptr)) {
-            // If it's a letter, convert to lowercase and copy
             *write_ptr = tolower(*read_ptr);
             write_ptr++;
         }
-        // Ignore all other characters (punctuation, spaces, etc.)
     }
-    *write_ptr = '\0'; // Null-terminate the processed string
+    *write_ptr = '\0';
 }
 
+/* Function to add a word to a partial list. 
+    Each entry should have the following form:
+    { word, [ file_id1, file_id2, ... ] }
+    */
 void add_word_to_list(WordInfo **word_list, const char *word, int file_id) {
-    // Check if the word is already in the list
     WordInfo *current = *word_list;
+    // Check if the word is already in the list
     while (current) {
         if (strcmp(current->word, word) == 0) {
             // Check if the file ID is already in the list
             for (int i = 0; i < current->file_count; i++) {
+                // If the file ID is already in the list, return
                 if (current->file_ids[i] == file_id) {
                     return;
                 }
             }
 
-            // Add the file ID to the list
+            // If the word is in the list, but with a different set of IDs, add the new ID to the list
             current->file_ids = realloc(current->file_ids, (current->file_count + 1) * sizeof(int));
             current->file_ids[current->file_count] = file_id;
             current->file_count++;
@@ -206,6 +240,7 @@ void add_word_to_list(WordInfo **word_list, const char *word, int file_id) {
     }
 }
 
+/* Function to merge a local list of words into a global list. */
 void merge_local_list_into_global(WordInfo **global_list, WordInfo *local_list) {
     WordInfo *current_local = local_list;
 
@@ -267,6 +302,7 @@ void merge_local_list_into_global(WordInfo **global_list, WordInfo *local_list) 
     }
 }
 
+/* Comparison function for qsort to sort words by file count and alphabetically. */
 int compare_words(const void *a, const void *b) {
     WordInfo *word_a = *(WordInfo **)a;
     WordInfo *word_b = *(WordInfo **)b;
@@ -277,6 +313,7 @@ int compare_words(const void *a, const void *b) {
     return strcmp(word_a->word, word_b->word); // Ascending alphabetically
 }
 
+/* Comparison function for qsort to sort file IDs. */
 int compare_file_ids(const void *a, const void *b) {
     int file_id_a = *(int *)a;
     int file_id_b = *(int *)b;
